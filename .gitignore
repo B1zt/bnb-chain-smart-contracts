@@ -1,0 +1,29 @@
+# Foundry
+out/
+cache/
+broadcast/*/dry-run/
+lcov.info
+
+# Node
+node_modules/
+.next/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Env and secrets
+.env
+.env.*
+!.env.example
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
