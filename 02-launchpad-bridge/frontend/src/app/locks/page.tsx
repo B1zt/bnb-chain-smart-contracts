@@ -123,7 +123,7 @@ export default function LocksPage() {
                           )}
                         >
                           {lock.withdrawn
-                            ? '—'
+                            ? '-'
                             : (formatCountdown(lock.unlockAt) ?? 'unlocked')}
                         </td>
                       </tr>

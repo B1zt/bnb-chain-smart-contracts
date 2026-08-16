@@ -31,7 +31,7 @@ export default function HomePage() {
       <section className="grid gap-4 sm:grid-cols-3">
         <div className="card">
           <p className="text-xs uppercase tracking-wide text-neutral-500">Live sales</p>
-          <p className="mt-1 text-2xl font-semibold tabular-nums">{live?.presales.length ?? '—'}</p>
+          <p className="mt-1 text-2xl font-semibold tabular-nums">{live?.presales.length ?? '-'}</p>
         </div>
         <div className="card">
           <p className="text-xs uppercase tracking-wide text-neutral-500">Raised, live sales</p>

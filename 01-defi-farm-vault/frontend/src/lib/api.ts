@@ -159,7 +159,7 @@ export function formatBps(bps: number, decimals = 2): string {
 
 /** USD values arrive at 18 decimals from the oracle. */
 export function formatUsd(value: string | null): string {
-  if (value === null) return '—';
+  if (value === null) return '-';
 
   const amount = Number(BigInt(value) / 10n ** 12n) / 1e6;
 

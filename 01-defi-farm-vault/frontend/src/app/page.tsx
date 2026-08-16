@@ -41,13 +41,13 @@ export default function HomePage() {
         <Stat label="Total value locked" value={formatUsd(pools?.totalTvlUsd ?? null)} />
         <Stat
           label="Best APR"
-          value={best ? formatBps(best.aprBps) : '—'}
+          value={best ? formatBps(best.aprBps) : '-'}
           hint={best?.name ?? undefined}
         />
-        <Stat label="Pools" value={pools ? String(pools.pools.length) : '—'} />
+        <Stat label="Pools" value={pools ? String(pools.pools.length) : '-'} />
         <Stat
           label="Vault share price"
-          value={vault ? formatPrice(vault.pricePerShare) : '—'}
+          value={vault ? formatPrice(vault.pricePerShare) : '-'}
           hint={vault ? 'Rises with every compound' : 'No vault deployed'}
         />
       </section>

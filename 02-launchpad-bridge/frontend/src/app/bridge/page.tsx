@@ -188,11 +188,11 @@ export default function BridgePage() {
         <div className="card space-y-4">
           <div className="flex items-center justify-between text-sm">
             <span className="text-neutral-500">From</span>
-            <span>Chain {config?.bridge.sourceChainId ?? '—'}</span>
+            <span>Chain {config?.bridge.sourceChainId ?? '-'}</span>
           </div>
           <div className="flex items-center justify-between text-sm">
             <span className="text-neutral-500">To</span>
-            <span>Chain {config?.bridge.destinationChainId ?? '—'}</span>
+            <span>Chain {config?.bridge.destinationChainId ?? '-'}</span>
           </div>
 
           <div className="border-t border-neutral-800 pt-4">
