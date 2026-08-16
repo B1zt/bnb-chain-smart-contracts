@@ -1,0 +1,162 @@
+// Indexed state for the BSC farm and auto-compounding vault.
+//
+// Everything here is derivable from chain logs and periodic reads, so it can be dropped and
+// replayed. It exists because the questions a farm UI asks are aggregate ones ("what is the TVL
+// across every pool", "what has the APR been for the last month") and answering those from an RPC
+// on every page load is neither fast nor affordable.
+//
+// uint256 values are stored as decimal strings: they do not fit in a JS number, and Prisma's
+// Decimal is awkward to compare against on-chain values exactly.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// A MasterChef pool, mirrored from chain plus enrichment the chain does not carry.
+model Pool {
+  /// On-chain pool id.
+  id              Int      @id
+  lpToken         String   @unique
+  /// Human labels resolved from the pair's two sides, e.g. "CAKE-WBNB".
+  name            String?
+  token0          String?
+  token1          String?
+  token0Symbol    String?
+  token1Symbol    String?
+  allocPoint      String   @default("0")
+  depositFeeBps   Int      @default(0)
+  harvestLockup   Int      @default(0)
+  /// LP staked in this pool, from the contract's own `lpSupply`.
+  lpSupply        String   @default("0")
+  /// USD value of `lpSupply`, priced off-chain. Null when no price is available.
+  tvlUsd          String?
+  /// Current APR in basis points, from emissions, prices and TVL.
+  aprBps          Int      @default(0)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  positions       Position[]
+  events          FarmEvent[]
+  snapshots       PoolSnapshot[]
+
+  @@index([isActive, aprBps])
+}
+
+/// A wallet's stake in one pool.
+///
+/// `amount` mirrors the contract. Pending rewards are deliberately not stored: they change every
+/// second, so any stored value is wrong the moment it is written. The API reads them live.
+model Position {
+  id            String   @id @default(cuid())
+  poolId        Int
+  pool          Pool     @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  address       String
+  amount        String   @default("0")
+  /// Cumulative rewards harvested, summed from Harvest events. Useful for realised-yield display.
+  totalHarvested String  @default("0")
+  updatedAt     DateTime @updatedAt
+
+  @@unique([poolId, address])
+  @@index([address])
+}
+
+/// Deposit, withdraw, harvest and emergency-withdraw logs.
+model FarmEvent {
+  id          String   @id @default(cuid())
+  poolId      Int
+  pool        Pool     @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  address     String
+  /// "DEPOSIT" | "WITHDRAW" | "HARVEST" | "EMERGENCY_WITHDRAW"
+  kind        String
+  amount      String
+  /// Deposit fee taken, for DEPOSIT events only.
+  fee         String   @default("0")
+  txHash      String
+  logIndex    Int
+  blockNumber BigInt
+  blockTime   DateTime
+
+  // A log is uniquely identified by its transaction and position within it. This is what makes
+  // reindexing idempotent: replaying a range cannot double-count.
+  @@unique([txHash, logIndex])
+  @@index([poolId, blockTime])
+  @@index([address, blockTime])
+}
+
+/// Periodic TVL and APR reading per pool, for charting.
+///
+/// APR has no event to index from: it is a function of emissions, token prices and TVL, all of
+/// which drift continuously. Sampling is the only way to have a history at all.
+model PoolSnapshot {
+  id            String   @id @default(cuid())
+  poolId        Int
+  pool          Pool     @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  lpSupply      String
+  tvlUsd        String?
+  aprBps        Int
+  rewardPriceUsd String?
+  capturedAt    DateTime
+
+  @@index([poolId, capturedAt])
+}
+
+/// State of the auto-compounding vault.
+model VaultPosition {
+  address       String   @id
+  shares        String   @default("0")
+  /// Assets deposited less withdrawn, the cost basis for unrealised gain.
+  netDeposited  String   @default("0")
+  updatedAt     DateTime @updatedAt
+}
+
+/// Share price over time, which is where the vault's realised yield actually shows up.
+model VaultSnapshot {
+  id             String   @id @default(cuid())
+  blockNumber    BigInt   @unique
+  totalAssets    String
+  totalShares    String
+  pricePerShare  String
+  capturedAt     DateTime
+
+  @@index([capturedAt])
+}
+
+/// One compound call, successful or not.
+///
+/// Kept so the keeper's decisions are auditable: whether it was profitable, what it actually earned,
+/// and what gas it paid. A keeper that silently loses money is worse than no keeper.
+model CompoundRun {
+  id              String   @id @default(cuid())
+  txHash          String?  @unique
+  /// "SUCCESS" | "SKIPPED_UNPROFITABLE" | "FAILED"
+  outcome         String
+  /// Reward pending at decision time.
+  pendingReward   String
+  /// Bounty the keeper expected to earn, in reward token.
+  expectedBounty  String
+  /// Estimated gas cost in wei at decision time.
+  estimatedGasWei String
+  /// USD value of both sides, so the profitability call can be reviewed later.
+  bountyUsd       String?
+  gasCostUsd      String?
+  lpAdded         String?
+  error           String?
+  createdAt       DateTime @default(now())
+
+  @@index([outcome, createdAt])
+  @@index([createdAt])
+}
+
+/// Per-contract indexing cursor holding the highest block considered final.
+model IndexerCursor {
+  id            String   @id
+  contract      String   @unique
+  lastSafeBlock BigInt
+  updatedAt     DateTime @updatedAt
+}

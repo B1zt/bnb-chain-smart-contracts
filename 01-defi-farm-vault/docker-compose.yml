@@ -1,0 +1,40 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: bscfarm-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: bscfarm
+      POSTGRES_PASSWORD: bscfarm
+      POSTGRES_DB: bscfarm
+    # Port 5434 so this runs alongside the Ethereum projects' databases.
+    ports:
+      - "5434:5432"
+    volumes:
+      - bscfarm-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bscfarm -d bscfarm"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  anvil:
+    # A local chain for development. For anything touching PancakeSwap, fork BSC instead:
+    #   anvil --fork-url https://bsc-dataseed.binance.org
+    # A bare chain has no router or pairs to integrate against.
+    image: ghcr.io/foundry-rs/foundry:latest
+    container_name: bscfarm-anvil
+    restart: unless-stopped
+    entrypoint: ["anvil"]
+    command:
+      - "--host=0.0.0.0"
+      - "--chain-id=31337"
+      - "--mnemonic=test test test test test test test test test test test junk"
+      # Three seconds, matching BNB Smart Chain, so the indexer's confirmation window behaves the
+      # way it would in production.
+      - "--block-time=3"
+    ports:
+      - "8547:8545"
+
+volumes:
+  bscfarm-data:
