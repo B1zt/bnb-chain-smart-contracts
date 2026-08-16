@@ -21,7 +21,16 @@ export function formatPrice(wei: bigint | string, decimals = 18): string {
 
   if (asNumber > 0 && asNumber < 0.0001) return '<0.0001';
 
-  return formatted.replace(/\.?0+$/, '');
+  const [whole = '0', fraction = ''] = formatted.split('.');
+
+  // Eighteen decimal places is the storage format, not a display format: a staking total rendered
+  // in full overflows its card and tells the reader nothing the first four digits did not. Large
+  // amounts get fewer still, since nobody reads the fourth decimal of a six-figure balance.
+  const maxFractionDigits = whole.length > 4 ? 2 : 4;
+  const trimmed = fraction.slice(0, maxFractionDigits).replace(/0+$/, '');
+  const grouped = BigInt(whole).toLocaleString('en-US');
+
+  return trimmed ? `${grouped}.${trimmed}` : grouped;
 }
 
 export function formatPriceWithSymbol(wei: bigint | string, currency: string): string {

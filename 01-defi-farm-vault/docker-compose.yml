@@ -1,3 +1,8 @@
+# Explicit project name. Compose otherwise derives it from the directory, and two projects in
+# this portfolio share the directory name 02-nft-marketplace, so without this they would share
+# one namespace and tear each other down.
+name: bscfarm
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -19,9 +24,18 @@ services:
       retries: 10
 
   anvil:
-    # A local chain for development. For anything touching PancakeSwap, fork BSC instead:
-    #   anvil --fork-url https://bsc-dataseed.binance.org
-    # A bare chain has no router or pairs to integrate against.
+    # A bare local chain. `script/Demo.s.sol` deploys stand-ins for the PancakeSwap router, the LP
+    # pair and the Chainlink feed on top of it, so the whole stack runs offline.
+    #
+    # To exercise the real integrations instead, fork BSC:
+    #
+    #   BSC_FORK_URL=<archive endpoint> docker compose up -d
+    #   # then add to the command below:
+    #   #   --fork-url=${BSC_FORK_URL}
+    #
+    # Note that this needs an *archive* endpoint. The public dataseed nodes prune state within a
+    # couple of hundred blocks, so a fork against them fails with "missing trie node" as soon as the
+    # chain head moves past your fork block. test/ForkPancake.t.sol has the same requirement.
     image: ghcr.io/foundry-rs/foundry:latest
     container_name: bscfarm-anvil
     restart: unless-stopped

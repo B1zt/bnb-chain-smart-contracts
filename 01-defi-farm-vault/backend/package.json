@@ -20,7 +20,8 @@
     "test:watch": "vitest",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit",
-    "keeper": "tsx src/keeper/main.ts"
+    "keeper": "tsx src/keeper/main.ts",
+    "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",

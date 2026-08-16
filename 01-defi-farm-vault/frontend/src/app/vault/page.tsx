@@ -6,7 +6,7 @@ import {useAccount, useReadContract, useWaitForTransactionReceipt, useWriteContr
 import {api, formatUsd} from '@/lib/api';
 import {cn} from '@/lib/cn';
 import {contracts, erc20Abi, vaultAbi} from '@/lib/contracts';
-import {formatPrice, formatRelativeTime, parseAmount} from '@/lib/format';
+import {VAULT_SHARE_DECIMALS, formatPrice, formatRelativeTime, parseAmount} from '@/lib/format';
 
 export default function VaultPage() {
   const {address} = useAccount();
@@ -143,7 +143,7 @@ export default function VaultPage() {
                 </div>
                 <div>
                   <dt className="text-neutral-500">Shares</dt>
-                  <dd className="tabular-nums">{formatPrice(position?.shares ?? '0')}</dd>
+                  <dd className="tabular-nums">{formatPrice(position?.shares ?? '0', VAULT_SHARE_DECIMALS)}</dd>
                 </div>
                 <div>
                   <dt className="text-neutral-500">Cost basis</dt>
