@@ -461,7 +461,11 @@ export async function apiRoutes(app: FastifyInstance): Promise<void> {
 
   /** Bridge health, so a UI can warn before someone sends funds into a stalled bridge. */
   app.get('/bridge/status', async (_request, reply) => {
-    if (!relayerEnabled || !config.DESTINATION_BRIDGE_ADDRESS) {
+    // Deliberately not gated on the relayer. Pause state, threshold and the validator set are
+    // public on-chain facts, and a viewer who wants to check them should not have to be the party
+    // holding a signing key. What the relayer's absence means is that nothing will be submitted
+    // automatically, which is reported separately below.
+    if (!config.DESTINATION_BRIDGE_ADDRESS) {
       return reply.send({enabled: false});
     }
 
@@ -500,6 +504,7 @@ export async function apiRoutes(app: FastifyInstance): Promise<void> {
 
     return reply.send({
       enabled: true,
+      relayerEnabled,
       paused,
       onChainThreshold: threshold ? Number(threshold) : null,
       validatorCount: validators?.length ?? null,

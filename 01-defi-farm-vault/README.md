@@ -1,11 +1,12 @@
 # DeFi Farm and Auto-Compounding Vault
 
-A yield farm for BNB Smart Chain: a capped BEP-20 reward token, a multi-pool MasterChef with
-per-second emissions, an ERC-4626 vault that auto-compounds its rewards through PancakeSwap, and a
-Chainlink oracle that refuses to serve a stale price.
+Yield farming on BNB Chain: a MasterChef farm that pays rewards for staking LP tokens, and a vault
+on top of it that harvests, swaps and re-stakes for you so you do not have to.
 
-Contracts in Solidity with Foundry. Backend in TypeScript with Fastify, Prisma and viem. Frontend in
-Next.js with wagmi and RainbowKit.
+Solidity contracts, a TypeScript API with a keeper bot, and a Next.js frontend. The whole thing runs
+on your laptop in about five minutes, with no testnet faucet and no API keys.
+
+![The dashboard](docs/screenshots/01-overview.png)
 
 > **BEP-20 is ERC-20.** There is no separate standard to implement. What makes this a BNB Chain
 > project is the ecosystem it integrates with: PancakeSwap for liquidity, Chainlink's BSC feeds for
@@ -13,52 +14,108 @@ Next.js with wagmi and RainbowKit.
 
 ---
 
-## What is actually interesting here
+## What you can do with it
 
-**The four MasterChef bugs, actually fixed.** Most BSC farms are copies of a copy, and they inherit
-the same defects:
+**Farm LP tokens.** Rewards are emitted per second rather than per block, so a change in BNB Chain's
+block time does not quietly rewrite the schedule. Each pool has its own weight, and can charge a
+deposit fee or hold harvests for a lockup period.
 
-1. `add` calls `massUpdatePools` first. Changing allocation points without settling every pool
-   retroactively rewrites how much each one earned since its last update. This is the single most
-   common MasterChef bug, and `test_addingPoolDoesNotRetroactivelyChangeEarnings` pins the fix.
-2. Deposits measure the balance actually received, not the amount requested. BNB Chain is full of
-   fee-on-transfer tokens; assuming the requested amount means the pool credits more than it holds
-   and the last withdrawer cannot exit.
-3. Emissions are per second, not per block. BNB Chain's block time has changed more than once, and
-   a per-block rate silently rewrites the emission schedule when it does.
-4. `emergencyWithdraw` touches no reward accounting and calls nothing on the reward token, so it
-   still works when the reward path is broken.
-   `test_emergencyWithdraw_worksWhenRewardTokenIsBroken` disables minting entirely and asserts
-   principal still comes out.
+![The farms list](docs/screenshots/02-farms.png)
 
-**The farm winds down instead of bricking.** Emissions are clamped to what the token will actually
-let the farm mint. Without that clamp, `updatePool` reverts once the cap is reached, and since
-deposit, withdraw and harvest all call it, the entire farm would freeze at the exact moment
-emissions ended, stranding every staker's principal. This was caught by
-`test_farmKeepsWorkingAfterCapIsReached` during development, not by inspection.
+**Deposit once and let the vault compound.** It harvests rewards, swaps them into both sides of the
+pair through PancakeSwap, re-adds liquidity and stakes the result. Your share count never changes;
+each share simply becomes worth more.
 
-**Compounding is bounded against a same-transaction quote.** `compound` is public and moves a known
-amount through a public AMM, which is a sandwich served on a plate. The minimum output is derived
-from `getAmountsOut` in the same transaction, not from a stored price which would itself be
-manipulable. The mock router can simulate a sandwich, so
-`test_compound_revertsWhenSandwichedBeyondTolerance` proves the bound bites and
-`test_compound_toleratesMovementWithinSlippageBound` proves it is not simply rejecting everything.
+![The auto-compound vault](docs/screenshots/03-vault.png)
 
-**Compounding is permissionless and pays a bounty.** A vault only its owner can compound stops
-compounding the moment that keeper breaks, and rewards left unharvested for days cost far more than
-any realistic sandwich.
+**Trigger a compound yourself and keep the bounty.** Anyone can call it, so the vault never depends
+on one keeper staying alive. The keeper bot in `backend/src/keeper` does the same on a timer, and
+only when the bounty is genuinely worth more than the gas.
 
-**The oracle rejects stale prices.** A Chainlink feed that stops updating keeps returning its last
-answer forever, with no error. Four checks stand between a feed and a price: positive answer, fresh
-`updatedAt`, complete round, and `answeredInRound >= roundId`. Callers choose `getPrice`, which
-reverts, or `tryGetPrice`, which degrades, because a liquidation must revert while a dashboard
-should not.
+![A wallet's positions](docs/screenshots/04-portfolio.png)
 
-**Fork tests run against live BSC.** Mocks prove the logic is self-consistent; they cannot prove the
-integration is right, because a mock is written to the same assumptions as the contract it tests.
-The fork suite hits the real PancakeSwap router, the real WBNB/BUSD pair and the real Chainlink
-BNB/USD feed, and cross-checks the oracle against the AMM. **It caught a wrong WBNB constant during
-development** that every mock test had happily passed.
+---
+
+## Run it yourself
+
+You will need [Docker](https://docs.docker.com/get-docker/), [Node 20+](https://nodejs.org),
+[pnpm](https://pnpm.io/installation) and
+[Foundry](https://book.getfoundry.sh/getting-started/installation).
+
+### 1. Start Postgres and a local chain
+
+```bash
+docker compose up -d
+```
+
+Postgres lands on port 5434 and an Anvil node on 8547. Anvil is a local chain: it mines on a timer,
+hands out funded test accounts, and forgets everything when you stop it.
+
+### 2. Deploy the whole stack
+
+```bash
+cd contracts
+forge install
+
+export RPC=http://localhost:8547
+export PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+
+forge script script/Demo.s.sol:Demo --rpc-url $RPC --broadcast --gas-estimate-multiplier 250
+```
+
+`Demo.s.sol` deploys the farm, the vault and the oracle, along with stand-ins for the PancakeSwap
+router, the LP pair and the Chainlink feed. It then opens two pools and stakes into them from three
+wallets, so the app has something to show.
+
+Those stand-ins are the same ones the test suite uses: a constant-product router with PancakeSwap's
+real 0.25% fee, so slippage and swap accounting behave the way they do in production. Only the
+counterparty is local, and `test/ForkPancake.t.sol` is what covers the real router.
+
+That key is Anvil's first test account, published in Foundry's own documentation and worthless on
+any real network. Never put a key holding real funds into a shell variable.
+
+The script prints every deployed address. Keep the output.
+
+> **Want the real PancakeSwap instead?** Add `--fork-url <archive endpoint>` to the anvil command in
+> `docker-compose.yml`, then deploy with `Deploy.s.sol` passing the real router and pair addresses.
+> This needs an **archive** node: the public BSC dataseed endpoints prune state within a couple of
+> hundred blocks, so a fork against them fails with `missing trie node` as soon as the chain head
+> moves past your fork block.
+
+### 3. Start the backend
+
+```bash
+cd ../backend
+cp .env.example .env        # paste in the addresses from step 2
+pnpm install
+pnpm prisma db push         # create the tables
+pnpm db:seed                # pool stats, positions and keeper history
+pnpm dev
+```
+
+`pnpm db:seed` fills the tables the indexer would normally build from chain history, so the pool
+list has TVL and APR rather than being correct and empty.
+
+### 4. Start the frontend
+
+```bash
+cd ../frontend
+cp .env.example .env.local  # paste in the NEXT_PUBLIC_ addresses from step 2
+pnpm install
+pnpm dev
+```
+
+Open <http://localhost:3000>. To connect a wallet, add the Anvil network to MetaMask (RPC
+`http://localhost:8547`, chain id `31337`) and import the test key from step 2.
+
+### If something does not work
+
+| Symptom | Cause |
+|---|---|
+| Every page says "wrong network" | Your wallet is not on chain 31337. |
+| TVL and APR read `$0.00` | You skipped `pnpm db:seed`, or the backend cannot reach Anvil. `curl localhost:4002/health` should return `{"status":"ok"}`. |
+| Backend exits at startup | It validates its whole environment at boot and names the variable at fault. |
+| `Demo.s.sol` fails out of gas | Keep `--gas-estimate-multiplier 250`. The vault's deposit path is deeper than a single estimate accounts for. |
 
 ---
 
@@ -66,95 +123,69 @@ development** that every mock test had happily passed.
 
 ```
 contracts/
-  src/
-    RewardToken.sol         Capped BEP-20, role-gated mint, one-way finishMinting
-    MasterChef.sol          Multi-pool farm, per-second emissions, deposit fees, harvest lockups
-    AutoCompoundVault.sol   ERC-4626 vault: harvest, swap, add liquidity, restake
-    PriceOracle.sol         Chainlink feeds with staleness and round-completeness checks
-    interfaces/             IRewardToken, IMasterChef, IPancakeRouter, IPancakePair
-  test/                     73 tests, plus 7 fork tests against live BSC
-  script/Deploy.s.sol       Chain-aware: picks the right router and feed for BSC, testnet or opBNB
-
-backend/            Pool stats, APR calculation, TVL indexer, keeper bot
-frontend/           Farm grid, stake/unstake/harvest, vault position, compound button
+  src/MasterChef.sol          Per-second emissions, deposit fees, harvest lockups
+  src/AutoCompoundVault.sol   ERC-4626 vault that harvests and re-stakes
+  src/PriceOracle.sol         Chainlink feeds with staleness checks
+  src/RewardToken.sol         Capped, role-gated reward token
+  script/Deploy.s.sol         Deployment against a real chain
+  script/Demo.s.sol           Full local stack with demo state
+  test/ForkPancake.t.sol      7 tests against live BSC
+  test/                       73 further tests
+backend/
+  src/keeper/                 Compound bot with a profitability check
+  src/pricing.ts              TVL and APR from oracle prices
+  src/indexer/                Chain events into the database
+  prisma/seed.ts              Sample data
+frontend/                     Farms, vault and portfolio
 ```
-
----
-
-## Running it
 
 ```bash
-docker compose up -d                         # Postgres + a local BSC-like node
-
-cd contracts
-forge install
-forge test                                   # 73 tests
-forge lint src                               # clean
-
-# Fork tests need an RPC. They skip automatically without one.
-BSC_RPC_URL=https://bsc-dataseed.binance.org forge test --match-contract ForkPancakeTest
-
-# Deploy to BSC testnet
-PRIVATE_KEY=0x... LP_TOKEN=0x... forge script script/Deploy.s.sol:Deploy \
-  --rpc-url https://data-seed-prebsc-1-s1.binance.org:8545 --broadcast --verify
-
-cd ../backend  && cp .env.example .env && pnpm install && pnpm db:migrate && pnpm dev
-cd ../frontend && cp .env.example .env.local && pnpm install && pnpm dev
+cd contracts && forge test    # 73 tests
 ```
 
-The deploy script picks the correct PancakeSwap router and Chainlink feed from the chain id, so the
-same command works on mainnet, testnet and opBNB without editing addresses.
-
----
-
-## Tests
+The fork tests need an archive endpoint:
 
 ```bash
-forge test                        # 73 tests
-forge test --gas-report
-forge coverage --ir-minimum
-FOUNDRY_PROFILE=deep forge test   # 10,000 fuzz runs
-
-BSC_RPC_URL=... forge test --match-contract ForkPancakeTest   # 7 tests against live BSC
+cd contracts && forge test --match-path test/ForkPancake.t.sol --fork-url <archive endpoint>
 ```
-
-Properties worth calling out:
-
-- `testFuzz_emissionsAreBounded` - total rewards across all users never exceed the emission schedule
-- `testFuzz_principalIsAlwaysRecoverable` - whatever happens, a staker can retrieve their principal
-- `testFuzz_vaultStaysSolvent` - shares outstanding are always redeemable from assets under management
-- `testFuzz_roundTripNeverProfits` - deposit then immediately redeem can never return more than went in
-- `testFuzz_stalenessBoundaryIsExact` - the oracle accepts a price exactly when it is inside the window
-- `testFuzz_normalisationIsExact` - decimal normalisation is exact for any answer a feed can report
 
 ---
 
-## Security notes
+## Decisions worth explaining
 
-| Decision | Reason |
-|---|---|
-| Reward token cap is `immutable` | Unlimited minting is the standard shape of a farm rug |
-| Minting is a role, granted to the chef | The farm can pay emissions without holding every other admin power |
-| `finishMinting` is one-way | Stronger than revoking a role, which can be granted again |
-| Emissions clamped to what is mintable | Otherwise the farm bricks the moment the cap is reached |
-| `add` and `set` call `massUpdatePools` | Otherwise allocation changes apply retroactively |
-| Deposits measure received balance | Fee-on-transfer tokens would otherwise break pool accounting |
-| `lpSupply` tracked, not `balanceOf` | A direct transfer into the farm cannot distort reward maths |
-| Deposit fee capped at 4% | Admin error cannot turn a fee into confiscation |
-| Harvest lockup capped at 14 days | An owner cannot lock rewards away indefinitely |
-| Emission rate capped | Bounds a fat-fingered update |
-| Reward token cannot be farmed | Otherwise the pool mints into its own staked balance |
-| `emergencyWithdraw` avoids reward logic | Principal must be recoverable even when rewards are broken |
-| Compound slippage bounded by a live quote | A stored price is manipulable; a stale one protects nothing |
-| Slippage cap is itself capped at 3% | Admin error cannot widen it into meaninglessness |
-| Caller bounty on compound | Keeps compounding frequent without a trusted keeper |
-| Vault withdrawals are never pausable | A pause must not trap user funds |
-| `_decimalsOffset` of 6 | Makes the ERC-4626 inflation attack cost far more than it returns |
-| Oracle checks four conditions per read | A stale feed returns its last answer forever, with no error |
-| Oracle heartbeat capped at 2 days | A feed allowed to be a week stale is not an oracle |
+**The four classic MasterChef bugs are fixed, and a fifth was found here.** Most BSC farms are
+copies of a copy and inherit the same defects: pools not updated before weight changes, deposit fees
+credited as stake, reward debt computed against a stale accumulator, and `massUpdatePools` skipped on
+`add`. All four are handled.
 
-Every privileged function is `onlyOwner`, and **the owner should be a multisig in production**. The
-deploy script accepts an `OWNER` env var and prints a warning when the owner is still the deployer.
+The fifth came out of a test in this repo. Once the reward token reached its cap, `updatePool`
+reverted, and because every deposit and withdraw calls it, the entire farm bricked permanently.
+Accrual is now clamped to what remains mintable, so the farm keeps working after emissions end.
+`test_farmKeepsWorkingAfterCapIsReached` is that test.
+
+**Slippage is bounded by a quote taken in the same transaction.** The vault asks the router what it
+should receive, then requires at least that minus a bounded tolerance. The mock router can be told
+to execute worse than it quotes, which is what makes the slippage test prove something: without
+that, a mock's quote and fill agree exactly and the test passes no matter what the contract does.
+
+**The oracle runs four checks on every read.** Answer greater than zero, round complete, answer no
+older than the feed's heartbeat, and the round not stale. `getPrice` reverts on a bad answer;
+`tryGetPrice` degrades. Contracts that call `latestAnswer` and nothing else are how oracle
+liquidations happen.
+
+**The keeper records every decision, not just the ones it acted on.** A compound that costs more gas
+than the bounty pays should not happen, and the log is how you prove the keeper knew that. Skipped
+runs appear alongside successful ones.
+
+**Emergency withdraw always works.** It abandons pending rewards and returns the principal with no
+call into the reward token at all, so a broken or paused reward token cannot trap deposits.
+
+---
+
+## A note on the toolchain
+
+`evm_version` is set to `cancun`. BNB Chain enabled it in the Tycho hardfork and opBNB followed, and
+OpenZeppelin v5 emits `MCOPY`, so an older target does not compile.
 
 This code has not been audited. It is a reference implementation.
 

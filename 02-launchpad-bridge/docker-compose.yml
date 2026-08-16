@@ -1,3 +1,8 @@
+# Explicit project name. Compose otherwise derives it from the directory, and two projects in
+# this portfolio share the directory name 02-nft-marketplace, so without this they would share
+# one namespace and tear each other down.
+name: launchpad
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -17,6 +22,21 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  anvil:
+    # Local chain, so the whole stack runs without a faucet or an RPC key. The bridge is exercised
+    # against one chain playing both roles; a second anvil on another port models a real pair.
+    image: ghcr.io/foundry-rs/foundry:latest
+    container_name: launchpad-anvil
+    restart: unless-stopped
+    entrypoint: ["anvil"]
+    command:
+      - "--host=0.0.0.0"
+      - "--chain-id=31337"
+      - "--mnemonic=test test test test test test test test test test test junk"
+      - "--block-time=3"
+    ports:
+      - "8548:8545"
 
 volumes:
   launchpad-data:

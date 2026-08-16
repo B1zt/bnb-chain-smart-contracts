@@ -1,5 +1,15 @@
 import {formatEther, formatUnits} from 'viem';
 
+/**
+ * Vault share decimals.
+ *
+ * The vault raises `_decimalsOffset()` to 6 as an inflation-attack defence, so a share is an
+ * 18 + 6 = 24 decimal token, not an 18 decimal one. Formatting a share balance as 18 decimals
+ * overstates it by a million, which is exactly the kind of number that makes a reviewer distrust
+ * everything else on the page.
+ */
+export const VAULT_SHARE_DECIMALS = 24;
+
 /** `0x1234…abcd`, the standard truncation for wallet addresses. */
 export function shortAddress(address: string): string {
   if (address.length < 12) return address;
@@ -21,7 +31,16 @@ export function formatPrice(wei: bigint | string, decimals = 18): string {
 
   if (asNumber > 0 && asNumber < 0.0001) return '<0.0001';
 
-  return formatted.replace(/\.?0+$/, '');
+  const [whole = '0', fraction = ''] = formatted.split('.');
+
+  // Eighteen decimal places is the storage format, not a display format: a staking total rendered
+  // in full overflows its card and tells the reader nothing the first four digits did not. Large
+  // amounts get fewer still, since nobody reads the fourth decimal of a six-figure balance.
+  const maxFractionDigits = whole.length > 4 ? 2 : 4;
+  const trimmed = fraction.slice(0, maxFractionDigits).replace(/0+$/, '');
+  const grouped = BigInt(whole).toLocaleString('en-US');
+
+  return trimmed ? `${grouped}.${trimmed}` : grouped;
 }
 
 export function formatPriceWithSymbol(wei: bigint | string, currency: string): string {

@@ -20,7 +20,11 @@ async function main(): Promise<void> {
   await app.listen({port: config.PORT, host: config.HOST});
   logger.info({port: config.PORT, chainId: config.CHAIN_ID}, 'api listening');
 
-  await indexer.start();
+  if (config.INDEXER_ENABLED) {
+    await indexer.start();
+  } else {
+    logger.warn('indexer disabled; the API is serving whatever is already in the database');
+  }
   await keeper.start();
 
   const shutdown = async (signal: string): Promise<void> => {

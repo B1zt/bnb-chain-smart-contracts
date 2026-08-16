@@ -6,7 +6,7 @@ import {useEffect} from 'react';
 import {useAccount, useWaitForTransactionReceipt, useWriteContract} from 'wagmi';
 import {api, formatBps, formatUsd} from '@/lib/api';
 import {contracts, masterChefAbi} from '@/lib/contracts';
-import {formatPrice, formatRelativeTime, shortAddress} from '@/lib/format';
+import {VAULT_SHARE_DECIMALS, formatPrice, formatRelativeTime, shortAddress} from '@/lib/format';
 
 export default function PortfolioPage() {
   const {address} = useAccount();
@@ -142,7 +142,7 @@ export default function PortfolioPage() {
             </div>
             <div>
               <p className="text-xs uppercase tracking-wide text-neutral-500">Shares</p>
-              <p className="mt-1 tabular-nums">{formatPrice(data.vault.shares)}</p>
+              <p className="mt-1 tabular-nums">{formatPrice(data.vault.shares, VAULT_SHARE_DECIMALS)}</p>
             </div>
           </div>
         </section>

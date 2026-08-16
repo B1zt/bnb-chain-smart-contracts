@@ -1,12 +1,24 @@
 import 'dotenv/config';
 import {z} from 'zod';
 
+/**
+ * Treat an empty variable as absent.
+ *
+ * An unset variable in a .env file arrives as an empty string, not as undefined, so `.optional()`
+ * on its own rejects the shipped .env.example and refuses to start over settings the operator
+ * deliberately left blank. Every optional value below goes through this.
+ */
+function optional<T extends z.ZodTypeAny>(schema: T) {
+  return z.preprocess((value) => (value === '' ? undefined : value), schema.optional());
+}
+
+
 const addressSchema = z
   .string()
   .regex(/^0x[0-9a-fA-F]{40}$/, 'must be a 20-byte hex address')
   .transform((value) => value.toLowerCase() as `0x${string}`);
 
-const optionalAddress = addressSchema.optional();
+const optionalAddress = optional(addressSchema);
 
 const csv = (value: string): string[] =>
   value
@@ -53,16 +65,24 @@ const envSchema = z.object({
    *
    * Publishing a Merkle root decides who gets an allocation, so that route is not open.
    */
-  ADMIN_API_KEY: z.string().min(16).optional(),
+  /**
+   * An unset variable in a .env file arrives as an empty string, not as undefined, so `.optional()`
+   * alone would reject the shipped .env.example and fail startup with a length complaint about a
+   * key the operator never set. Empty is normalised to absent first.
+   */
+  ADMIN_API_KEY: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.string().min(16).optional(),
+  ),
 
   /* ------------------------------------------------------------- bridge --- */
 
   SOURCE_CHAIN_ID: z.coerce.number().int().positive().default(97),
-  SOURCE_RPC_URL: z.string().url().optional(),
+  SOURCE_RPC_URL: optional(z.string().url()),
   SOURCE_BRIDGE_ADDRESS: optionalAddress,
 
   DESTINATION_CHAIN_ID: z.coerce.number().int().positive().default(11155111),
-  DESTINATION_RPC_URL: z.string().url().optional(),
+  DESTINATION_RPC_URL: optional(z.string().url()),
   DESTINATION_BRIDGE_ADDRESS: optionalAddress,
 
   /**
@@ -76,10 +96,15 @@ const envSchema = z.object({
   /** Validator signatures required by the destination bridge. Must match its on-chain threshold. */
   BRIDGE_THRESHOLD: z.coerce.number().int().positive().default(3),
 
-  RELAYER_PRIVATE_KEY: z
-    .string()
-    .regex(/^0x[0-9a-fA-F]{64}$/, 'must be a 32-byte hex private key')
-    .optional(),
+  // An unset variable in a .env file arrives as an empty string, so `.optional()` alone would
+  // reject the shipped .env.example and refuse to start over a key that is meant to be absent.
+  RELAYER_PRIVATE_KEY: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z
+      .string()
+      .regex(/^0x[0-9a-fA-F]{64}$/, 'must be a 32-byte hex private key')
+      .optional(),
+  ),
 
   RELAYER_INTERVAL: z.coerce.number().int().positive().default(15),
 
@@ -88,7 +113,7 @@ const envSchema = z.object({
 
   /** Validator signing services, one URL each. */
   VALIDATOR_ENDPOINTS: z.string().default('').transform(csv),
-  VALIDATOR_API_KEY: z.string().optional(),
+  VALIDATOR_API_KEY: optional(z.string()),
 
   /**
    * Local validator keys, for running the whole pipeline in development.
@@ -100,6 +125,17 @@ const envSchema = z.object({
     .string()
     .default('')
     .transform((value) => csv(value).filter((key) => /^0x[0-9a-fA-F]{64}$/.test(key))),
+  /**
+   * Whether this process runs the indexer.
+   *
+   * Off lets the API serve seeded or already-indexed data without a chain connection, and lets the
+   * indexer run as its own process (`pnpm indexer`) without the API double-indexing behind it.
+   */
+  INDEXER_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((value) => value === 'true'),
+
 });
 
 const parsed = envSchema.safeParse(process.env);

@@ -1,11 +1,13 @@
 # Launchpad, Presale and Cross-Chain Bridge
 
-A token launchpad for BNB Chain: presales with unconditional refunds, a liquidity locker with no
-escape hatch, Chainlink-priced contributions, and a lock-and-mint bridge with a threshold validator
-set.
+A token launchpad for BNB Chain: presales where refunds are unconditional, a liquidity locker with
+no escape hatch, and a bridge that only releases funds once a threshold of independent validators
+has signed.
 
-Contracts in Solidity with Foundry. Backend in TypeScript with Fastify, Prisma and viem, including
-the bridge relayer. Frontend in Next.js with wagmi and RainbowKit.
+Solidity contracts, a TypeScript API with a bridge relayer, and a Next.js frontend. The whole thing
+runs on your laptop in about five minutes, with no testnet faucet and no API keys.
+
+![The launchpad](docs/screenshots/01-overview.png)
 
 ---
 
@@ -16,78 +18,111 @@ arrives before the product, bridges because they concentrate value behind code t
 turned out to be wrong.
 
 Both are built here around one principle: **a buyer should be able to verify the guarantees, not
-trust them.** Every safety property below is enforced by code and covered by a test, and where a
-guarantee genuinely cannot be given, the README and the UI say so rather than implying otherwise.
+trust them.** Where a guarantee cannot be enforced in code, this repo says so plainly rather than
+implying safety it cannot deliver.
 
 ---
 
-## What is actually interesting here
+## What you can do with it
 
-### Presale
+**Run a presale.** Contributions are priced in USD through Chainlink, so a sale can accept BNB and
+stablecoins at once and still have a single hard cap. Tiers are a Merkle root, so an allowlist of
+50,000 addresses costs one transaction to publish.
 
-**Refunds are unconditional and permissionless.** Below the soft cap, every contributor can withdraw
-in full. No owner action is required and no owner action can prevent it, because `status()` is a
-pure function of the raise, the clock and the cancellation flag. `finalize` is the only path from
-escrow to the project and it reverts below the soft cap.
+![Presales in three states](docs/screenshots/02-launchpad.png)
 
-**The absence of functions is the feature.** There is no `emergencyWithdraw`, no `rescueTokens`
-covering the raise currency, and no admin path to escrowed funds. Those functions are how presale
-rugs are actually executed, and `test_ownerCannotTouchFundsBeforeFinalisation` asserts they are not
-reachable.
+**Get refunded automatically if the sale misses its soft cap.** Not "the team will refund you":
+there is no admin function that can touch escrowed funds before finalisation, and refunds below the
+soft cap need no approval from anyone.
 
-**Terms are immutable once set.** Caps, price and timing are fixed at initialisation. A presale
-whose price the owner can change after you have paid is not a presale.
+**Lock liquidity where nobody can pull it.** The locker has no owner at all, and no early withdrawal
+in any form. A lock can be extended, transferred or split, and that is the entire surface. There is
+no pause, no admin, and no upgrade path, because each of those is a way to take the liquidity back.
 
-**Contributions are priced in USD via Chainlink.** A BNB contribution and a stablecoin contribution
-count identically against the caps. Pricing a raise in BNB means the real cap moves with the market
-between opening and closing.
+![The liquidity locker](docs/screenshots/03-locks.png)
 
-**Sales are funded atomically with creation.** The factory pulls the full token allocation in the
-same transaction that deploys the clone. A listed sale that cannot honour a single claim is the
-classic launchpad failure.
+**Bridge tokens between chains.** Tokens are locked on the source chain and released on the
+destination once a threshold of validators has signed. The relayer that carries the message cannot
+alter it: every field is covered by those signatures.
 
-**Clones, not deployments.** A full presale costs a few million gas; an EIP-1167 minimal proxy costs
-about 45,000. The implementation is `_disableInitializers()`-locked, so the template itself cannot
-be hijacked.
+![The bridge](docs/screenshots/04-bridge.png)
 
-### Liquidity locker
+---
 
-**No early withdrawal, for anyone, ever.** No owner, no admin role, no emergency function. A locker
-with an escape hatch provides no assurance at all, because the escape hatch is what gets used during
-a rug. Locks can be extended, transferred and split, but never shortened.
+## Run it yourself
 
-**Amounts are measured, not assumed.** A fee-on-transfer token delivers less than was sent, and a
-locker reporting more than it holds is worse than no locker.
+You will need [Docker](https://docs.docker.com/get-docker/), [Node 20+](https://nodejs.org),
+[pnpm](https://pnpm.io/installation) and
+[Foundry](https://book.getfoundry.sh/getting-started/installation).
 
-**`lockedSupplyBps` is the number that matters.** "5% locked" and "95% locked" are very different
-situations, and a raw amount does not distinguish them.
+### 1. Start Postgres and a local chain
 
-### Bridge
+```bash
+docker compose up -d
+```
 
-**Written around the exploits that have actually happened.** Each defence maps to a specific
-incident, and each has a test named after the failure class:
+Postgres lands on port 5435 and an Anvil node on 8548.
 
-| Failure | Incident | Defence here |
-|---|---|---|
-| Message replay | Nomad, $190M | `processed` checked before any state change, zero hash rejected |
-| Signature verification bypass | Wormhole, $325M | EIP-712 digest binds chain id, bridge address and every field |
-| Cross-chain signature reuse | general | `destinationChainId` and `destinationBridge` both checked |
-| Duplicate validator signatures | deployed multisig bridges | Signers must be strictly ascending |
-| Compromised validator majority | Ronin, $625M | Strict-majority threshold, daily caps, large-transfer delay |
+### 2. Deploy the whole stack
 
-**The relayer is not trusted.** It cannot forge a transfer, change an amount or redirect a
-recipient: all of it is covered by validator signatures and re-derived on the destination. The worst
-it can do is refuse to relay, and anyone can run another.
+```bash
+cd contracts
+forge install
 
-**The relayer's own hard problem is crash safety**, not security. Every transfer has a persisted
-lifecycle (`OBSERVED → CONFIRMED → SIGNED → SUBMITTED → COMPLETED`) with each transition written
-before the action it authorises, so a restart resumes rather than dropping or duplicating.
+export RPC=http://localhost:8548
+export PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 
-**What this bridge does not give you.** It is externally validated, so its security rests on a
-majority of validators being honest and independently operated. That assumption has failed on
-bridges far larger than this one. For production, a battle-tested messaging layer such as LayerZero,
-Axelar or Chainlink CCIP moves that problem to a party that specialises in it. The UI says this in
-as many words, above the send button.
+forge script script/Demo.s.sol:Demo --rpc-url $RPC --broadcast --gas-estimate-multiplier 250
+
+# Push the chain past the third sale's end time so it settles as FAILED.
+cast rpc evm_increaseTime 600 --rpc-url $RPC && cast rpc evm_mine --rpc-url $RPC
+```
+
+`Demo.s.sol` deploys the factory, the locker and the bridge with a five validator set, then creates
+three presales: one live, one upcoming and tier-gated, and one that will close under its soft cap. It
+also locks liquidity three times and contributes from two wallets.
+
+The failed sale matters. It is the case worth looking at, because that is where refunds either work
+or do not.
+
+That key is Anvil's first test account, published in Foundry's own documentation and worthless on
+any real network. Never put a key holding real funds into a shell variable.
+
+### 3. Start the backend
+
+```bash
+cd ../backend
+cp .env.example .env        # paste in the addresses from step 2
+pnpm install
+pnpm prisma db push         # create the tables
+pnpm db:seed                # contributions, locks and bridge transfers
+pnpm dev
+```
+
+For a single-machine demo, point both `SOURCE_*` and `DESTINATION_*` at the same Anvil and the same
+bridge address. One chain plays both roles, which is enough to exercise the whole message path. A
+real deployment uses two chains and two bridge contracts.
+
+### 4. Start the frontend
+
+```bash
+cd ../frontend
+cp .env.example .env.local  # paste in the NEXT_PUBLIC_ addresses from step 2
+pnpm install
+pnpm dev
+```
+
+Open <http://localhost:3000>. To connect a wallet, add the Anvil network to MetaMask (RPC
+`http://localhost:8548`, chain id `31337`) and import the test key from step 2.
+
+### If something does not work
+
+| Symptom | Cause |
+|---|---|
+| Every page says "wrong network" | Your wallet is not on chain 31337. |
+| The bridge page says it is disabled | `DESTINATION_BRIDGE_ADDRESS` is unset in `backend/.env`. |
+| No presales listed | You skipped `pnpm db:seed`, or the addresses in `.env` do not match what the demo script printed. |
+| Backend exits at startup | It validates its whole environment at boot and names the variable at fault. |
 
 ---
 
@@ -95,99 +130,65 @@ as many words, above the send button.
 
 ```
 contracts/
-  src/
-    Presale.sol             Soft/hard caps, tiers, USD pricing, unconditional refunds
-    PresaleFactory.sol      EIP-1167 clone factory, funds each sale atomically
-    LiquidityLocker.sol     Time locks with no early withdrawal, splittable and extendable
-    ChainlinkPriceFeed.sol  USD pricing with staleness and round-completeness checks
-    TokenBridge.sol         Lock-and-mint with a threshold validator set
-    BridgedToken.sol        Bridge-only mint, so supply is always backed
-  test/                     70 tests, organised by exploit class for the bridge
-  script/Deploy.s.sol       Chain-aware; mainnet constants verified against the live chain
-
-backend/            Launchpad indexer, tier Merkle service, bridge relayer
-frontend/           Sale browser, contribute/claim/refund, lock explorer, bridge UI
+  src/Presale.sol             One sale. Status is a pure function of raise and clock
+  src/PresaleFactory.sol      EIP-1167 clones, funded atomically at creation
+  src/LiquidityLocker.sol     No owner, no early withdrawal
+  src/TokenBridge.sol         Threshold signatures, daily caps, large-transfer delay
+  src/ChainlinkPriceFeed.sol  USD pricing with staleness checks
+  script/Demo.s.sol           Full local stack with demo state
+  test/TokenBridge.t.sol      Organised by exploit class: Nomad, Wormhole, Ronin
+  test/                       70 tests
+backend/
+  src/relayer/                OBSERVED to CONFIRMED to SIGNED to SUBMITTED to COMPLETED
+  src/indexer/                Chain events into the database
+  prisma/seed.ts              Sample data
+frontend/                     Launchpad, locker and bridge
 ```
-
----
-
-## Running it
 
 ```bash
-docker compose up -d                         # Postgres
-
-cd contracts
-forge install
-forge test                                   # 70 tests
-forge lint src                               # clean
-
-PRIVATE_KEY=0x... BRIDGE_VALIDATORS=0xa,0xb,0xc \
-  forge script script/Deploy.s.sol:Deploy \
-  --rpc-url https://data-seed-prebsc-1-s1.binance.org:8545 --broadcast --verify
-
-cd ../backend  && cp .env.example .env && pnpm install && pnpm db:migrate && pnpm dev
-cd ../frontend && cp .env.example .env.local && pnpm install && pnpm dev
+cd contracts && forge test    # 70 tests
 ```
-
-The bridge needs deploying on **both** chains, then `configureChain` called on each pointing at the
-other. That step cannot be scripted from one side, because neither address exists until the other is
-live.
-
-To run the relayer end to end locally, set `DEV_VALIDATOR_KEYS` to a few private keys. That mode
-signs locally instead of calling validator services, and refuses to run outside
-`NODE_ENV=development`, because one process holding every validator key is a custodian rather than a
-bridge.
 
 ---
 
-## Tests
+## Decisions worth explaining
 
-```bash
-forge test                        # 70 tests
-forge test --gas-report
-forge coverage --ir-minimum
-FOUNDRY_PROFILE=deep forge test   # 10,000 fuzz runs
-```
+**A presale's status is a pure function of its raise and the clock.** There is no status field an
+owner can set. Whether a sale is live, succeeded or failed is derived, so the contract cannot claim
+one thing while its balance says another.
 
-Properties worth calling out:
+**There is no admin path to escrowed funds.** Not a restricted one: none. Before finalisation the
+only ways money leaves a Presale are a contribution refund and a successful finalisation. This is
+the single most important property in the contract and the one most presale contracts get wrong.
 
-- `testFuzz_failedSaleRefundsEverything` - a failed sale returns every wei it took, nothing stranded
-- `testFuzz_hardCapIsNeverExceeded` - the raise cannot exceed the cap however contributions arrive
-- `testFuzz_noTransferIsEverReleasedTwice` - no amount or nonce allows a double release
-- `testFuzz_belowThresholdAlwaysRejected` - any signature count below threshold is rejected
-- `testFuzz_neverWithdrawableEarly` - no lock is ever withdrawable before its unlock time
-- `testFuzz_splitConservesTotal` - splitting a lock creates and destroys nothing
+**The locker has no owner.** No pause, no admin, no upgrade path, no early withdrawal. Every one of
+those is a way to take locked liquidity back, and a locker with any of them is not a lock, it is a
+promise.
+
+**Bridge signatures must arrive in strictly ascending signer order.** That is what makes duplicate
+signature detection O(n) instead of O(n²), and duplicate signatures are exactly how a threshold gets
+forged by one compromised key. The test file is organised by exploit class, with a test per real
+bridge failure: Nomad's uninitialised root, Wormhole's unverified guardian set, Ronin's
+majority-of-validators compromise.
+
+**Large transfers wait out a delay before release.** An hour, on anything above the threshold. That
+delay is the window in which a compromised validator set can be noticed and the bridge paused before
+the money leaves. It is the only defence that works after the signature check has already been
+defeated.
+
+**The bridge's trust model is stated in the UI.** An externally-validated bridge is only as honest
+as a majority of its validators, that assumption has failed before on bridges far larger than this
+one, and the interface says so rather than showing a padlock icon.
 
 ---
 
-## Security notes
+## What is not here
 
-| Decision | Reason |
-|---|---|
-| No admin path to escrowed funds | This is how presale rugs are executed |
-| `status()` is a pure function of raise and clock | Nobody can flip a failed sale into a successful one |
-| Sale terms immutable after initialisation | A price the owner can change after you pay is not a price |
-| Refunds return every currency used | A partial refund is not a refund |
-| Sales funded atomically at creation | A listed sale must be able to honour its claims |
-| `finalize` checks token balance first | The project cannot take the money and leave buyers unable to claim |
-| Implementation is `_disableInitializers()` | Otherwise the template is a live unowned contract |
-| Contributions measured, not assumed | Fee-on-transfer tokens would leave the last refund short |
-| Locker has no owner at all | An escape hatch is what gets used during a rug |
-| Locks can be extended, never shortened | Otherwise "extend" becomes the escape hatch |
-| Lock duration capped at 10 years | A century-long lock is a burn; burning is the honest way to do that |
-| Price feed has no `tryGetPrice` | If the price cannot be trusted, the contribution must not be accepted |
-| Bridge signatures bind chain id and address | Stops replay across chains and deployments |
-| Signers must be strictly ascending | Makes duplicate-signature threshold bypass impossible |
-| Threshold enforced as a strict majority | A minority moving funds defeats the point of a validator set |
-| Daily caps per token | Bounds what a compromised validator set can extract |
-| Large transfers delayed one hour | Creates a window in which pausing actually helps |
-| Pause is not behind a timelock | When a bridge is being drained, a two day delay on stop is useless |
-| `BridgedToken` mint is bridge-only | Every unit must correspond to a locked unit on the home chain |
+The relayer signs with a single key in this demo. A real validator set runs independent operators on
+independent infrastructure, which is the entire security assumption: five validators run by one team
+is a multisig with extra steps.
 
-Every privileged function is `onlyOwner`, and **the owner should be a multisig in production**.
-
-**This code has not been audited. Do not bridge real value with it.** It is a reference
-implementation published to show how these systems are built and where they go wrong.
+This code has not been audited. It is a reference implementation.
 
 ---
 

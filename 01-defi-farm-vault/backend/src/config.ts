@@ -1,6 +1,18 @@
 import 'dotenv/config';
 import {z} from 'zod';
 
+/**
+ * Treat an empty variable as absent.
+ *
+ * An unset variable in a .env file arrives as an empty string, not as undefined, so `.optional()`
+ * on its own rejects the shipped .env.example and refuses to start over settings the operator
+ * deliberately left blank. Every optional value below goes through this.
+ */
+function optional<T extends z.ZodTypeAny>(schema: T) {
+  return z.preprocess((value) => (value === '' ? undefined : value), schema.optional());
+}
+
+
 const addressSchema = z
   .string()
   .regex(/^0x[0-9a-fA-F]{40}$/, 'must be a 20-byte hex address')
@@ -54,10 +66,15 @@ const envSchema = z.object({
   //////////////////////////////////////////////////////////////*/
 
   /** Set to enable the compound keeper. Without it the keeper stays off. */
-  KEEPER_PRIVATE_KEY: z
-    .string()
-    .regex(/^0x[0-9a-fA-F]{64}$/, 'must be a 32-byte hex private key')
-    .optional(),
+  // An unset variable in a .env file arrives as an empty string, so `.optional()` alone would
+  // reject the shipped .env.example and refuse to start over a key that is meant to be absent.
+  KEEPER_PRIVATE_KEY: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z
+      .string()
+      .regex(/^0x[0-9a-fA-F]{64}$/, 'must be a 32-byte hex private key')
+      .optional(),
+  ),
 
   /** Seconds between keeper evaluations. */
   KEEPER_INTERVAL: z.coerce.number().int().positive().default(300),
@@ -77,7 +94,18 @@ const envSchema = z.object({
   KEEPER_DEADLINE_SECONDS: z.coerce.number().int().positive().default(120),
 
   /** USD price of the reward token, when no on-chain feed exists for it. */
-  REWARD_TOKEN_PRICE_USD: z.coerce.number().nonnegative().optional(),
+  REWARD_TOKEN_PRICE_USD: optional(z.coerce.number().nonnegative()),
+  /**
+   * Whether this process runs the indexer.
+   *
+   * Off lets the API serve seeded or already-indexed data without a chain connection, and lets the
+   * indexer run as its own process (`pnpm indexer`) without the API double-indexing behind it.
+   */
+  INDEXER_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((value) => value === 'true'),
+
 });
 
 const parsed = envSchema.safeParse(process.env);

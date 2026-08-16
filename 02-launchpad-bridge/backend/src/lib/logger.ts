@@ -19,13 +19,30 @@ export const loggerOptions: LoggerOptions = {
       }
     : {}),
   formatters: {
-    // Block numbers and token ids are bigints, and JSON.stringify throws on those by default.
-    log: (object) =>
-      JSON.parse(
-        JSON.stringify(object, (_key, value) =>
-          typeof value === 'bigint' ? value.toString() : value,
-        ),
-      ) as Record<string, unknown>,
+    /*
+     * Two things break the default JSON encoding of a log line.
+     *
+     * Block numbers, token ids and slots are bigints, which `JSON.stringify` throws on outright.
+     * And Fastify's request logs carry the raw request and response, which reference each other,
+     * so a naive round trip throws "Converting circular structure to JSON" on the first HTTP
+     * request the server handles. Both have to be handled or the logger takes the process down.
+     */
+    log: (object) => {
+      const seen = new WeakSet<object>();
+
+      return JSON.parse(
+        JSON.stringify(object, (_key, value: unknown) => {
+          if (typeof value === 'bigint') return value.toString();
+
+          if (typeof value === 'object' && value !== null) {
+            if (seen.has(value)) return '[circular]';
+            seen.add(value);
+          }
+
+          return value;
+        }),
+      ) as Record<string, unknown>;
+    },
   },
 };
 

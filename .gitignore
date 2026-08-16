@@ -1,7 +1,13 @@
 # Foundry
 out/
 cache/
-broadcast/*/dry-run/
+**/broadcast/*/dry-run/
+# Foundry broadcast logs.
+#
+# Keeping deployment receipts for a real network is reasonable; keeping them for a local chain is
+# not. Anvil hands out the same addresses every run, so a stale local receipt looks authoritative
+# and is wrong. Only local-chain runs are ignored here.
+**/broadcast/*/31337/
 lcov.info
 
 # Node
