@@ -4,3 +4,9 @@
 [submodule "01-defi-farm-vault/contracts/lib/openzeppelin-contracts"]
 	path = 01-defi-farm-vault/contracts/lib/openzeppelin-contracts
 	url = https://github.com/OpenZeppelin/openzeppelin-contracts
+[submodule "02-launchpad-bridge/contracts/lib/forge-std"]
+	path = 02-launchpad-bridge/contracts/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+[submodule "02-launchpad-bridge/contracts/lib/openzeppelin-contracts"]
+	path = 02-launchpad-bridge/contracts/lib/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts

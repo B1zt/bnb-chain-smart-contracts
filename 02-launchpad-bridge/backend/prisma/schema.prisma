@@ -1,0 +1,203 @@
+// Indexed state for the launchpad and the cross-chain bridge.
+//
+// The bridge tables are the interesting ones. A relayer is a stateful process that observes one
+// chain and acts on another, and the failure mode nobody plans for is a crash between "observed"
+// and "acted". Every transfer therefore has an explicit lifecycle here, so a restart can resume
+// from whatever stage it reached rather than either dropping the transfer or double-submitting it.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PresaleStatus {
+  PENDING
+  LIVE
+  SUCCEEDED
+  FAILED
+  FINALISED
+}
+
+/// Lifecycle of a cross-chain transfer, as seen by the relayer.
+enum TransferStatus {
+  /// Seen on the source chain, not yet confirmed to the required depth.
+  OBSERVED
+  /// Source transaction is final. Ready to collect validator signatures.
+  CONFIRMED
+  /// Enough validator signatures gathered to meet the destination threshold.
+  SIGNED
+  /// Submitted to the destination chain, awaiting its receipt.
+  SUBMITTED
+  /// Released on the destination chain.
+  COMPLETED
+  /// Queued by the destination bridge's large-transfer delay.
+  DELAYED
+  /// Submission reverted. Retriable.
+  FAILED
+}
+
+/// A presale, mirrored from chain.
+model Presale {
+  address           String        @id
+  creator           String
+  token             String
+  tokenSymbol       String?
+  tokenName         String?
+  tokenDecimals     Int           @default(18)
+  tokensPerUsd      String
+  softCapUsd        String
+  hardCapUsd        String
+  minContributionUsd String
+  maxContributionUsd String
+  startTime         DateTime
+  endTime           DateTime
+  tierRoot          String
+  /// Raised so far, in USD at 18 decimals.
+  raisedUsd         String        @default("0")
+  contributorCount  Int           @default(0)
+  status            PresaleStatus @default(PENDING)
+  /// Launchpad review flag. A curation signal, never a safety guarantee.
+  isVerified        Boolean       @default(false)
+  /// Project-supplied metadata: description, links, logo.
+  metadata          Json?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  contributions     Contribution[]
+  tiers             PresaleTier[]
+
+  @@index([status, endTime])
+  @@index([creator])
+  @@index([isVerified, status])
+}
+
+model Contribution {
+  id            String   @id @default(cuid())
+  presaleAddress String
+  presale       Presale  @relation(fields: [presaleAddress], references: [address], onDelete: Cascade)
+  contributor   String
+  currency      String
+  amount        String
+  usdValue      String
+  txHash        String
+  logIndex      Int
+  blockNumber   BigInt
+  blockTime     DateTime
+
+  // Uniqueness on the log position is what makes reindexing idempotent.
+  @@unique([txHash, logIndex])
+  @@index([presaleAddress, blockTime])
+  @@index([contributor])
+}
+
+/// Allowlist tier entries, the input the on-chain Merkle root was built from.
+///
+/// The one table here that is not derivable from chain state: the root commits to these leaves but
+/// does not reveal them, so losing this table means nobody can generate a proof again.
+model PresaleTier {
+  id             String  @id @default(cuid())
+  presaleAddress String
+  presale        Presale @relation(fields: [presaleAddress], references: [address], onDelete: Cascade)
+  address        String
+  /// Per-wallet USD cap for this entry, 18 decimals.
+  allowanceUsd   String
+  leafIndex      Int
+
+  @@unique([presaleAddress, address])
+  @@index([address])
+}
+
+/// An LP or token lock.
+model Lock {
+  id            String   @id
+  token         String
+  tokenSymbol   String?
+  owner         String
+  amount        String
+  lockedAt      DateTime
+  unlockAt      DateTime
+  withdrawn     Boolean  @default(false)
+  description   String   @default("")
+  updatedAt     DateTime @updatedAt
+
+  @@index([token])
+  @@index([owner])
+  @@index([unlockAt, withdrawn])
+}
+
+/// A cross-chain transfer and everything the relayer knows about it.
+model BridgeTransfer {
+  /// Message hash from the source chain. The canonical identifier on both sides.
+  messageHash       String         @id
+  sourceChainId     Int
+  destinationChainId Int
+  destinationBridge String
+  token             String
+  sender            String
+  recipient         String
+  amount            String
+  nonce             String
+
+  status            TransferStatus @default(OBSERVED)
+
+  sourceTxHash      String
+  sourceBlockNumber BigInt
+  sourceBlockTime   DateTime
+  /// Confirmations observed so far, for a progress bar the user can actually read.
+  confirmations     Int            @default(0)
+
+  destinationTxHash String?
+  completedAt       DateTime?
+  /// Set when the destination bridge queues a large transfer.
+  executableAt      DateTime?
+
+  /// Attempts made, so a permanently failing transfer stops being retried forever.
+  attempts          Int            @default(0)
+  lastError         String?
+
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  signatures        BridgeSignature[]
+
+  @@index([status, createdAt])
+  @@index([recipient])
+  @@index([sender])
+  @@index([sourceChainId, nonce])
+}
+
+/// One validator's signature over a transfer.
+///
+/// Stored separately so signatures can be collected asynchronously and survive a relayer restart.
+/// A relayer that holds them only in memory has to re-request every signature after any crash,
+/// which is exactly when a validator is most likely to be unreachable.
+model BridgeSignature {
+  id          String         @id @default(cuid())
+  messageHash String
+  transfer    BridgeTransfer @relation(fields: [messageHash], references: [messageHash], onDelete: Cascade)
+  validator   String
+  signature   String
+  createdAt   DateTime       @default(now())
+
+  // One signature per validator per transfer. This is what stops the same validator's signature
+  // being counted twice, which is the bug the on-chain sorted-signer check also guards against.
+  @@unique([messageHash, validator])
+  @@index([messageHash])
+}
+
+/// Per-contract indexing cursor holding the highest block considered final.
+model IndexerCursor {
+  id            String   @id
+  contract      String
+  chainId       Int
+  lastSafeBlock BigInt
+  updatedAt     DateTime @updatedAt
+
+  // Keyed on both, because the bridge is deployed at a different address on each chain and the
+  // relayer indexes both from one process.
+  @@unique([contract, chainId])
+}

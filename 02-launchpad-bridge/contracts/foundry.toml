@@ -1,0 +1,60 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+test = "test"
+script = "script"
+solc = "0.8.28"
+# BNB Smart Chain enabled Cancun in the Tycho hardfork and opBNB followed, so MCOPY and transient
+# storage are both available. OpenZeppelin v5 emits MCOPY, so an older target does not compile.
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 200
+bytecode_hash = "none"
+cbor_metadata = false
+
+remappings = [
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+    "forge-std/=lib/forge-std/src/",
+]
+
+[lint]
+# Farm epochs and harvest lockups are measured in hours or days. A validator nudging the timestamp
+# by a couple of seconds is not a meaningful attack on either.
+#
+# The lint gate is `forge lint src`, which is clean.
+exclude_lints = ["block-timestamp"]
+
+[profile.default.fuzz]
+runs = 512
+
+[profile.default.invariant]
+runs = 256
+depth = 64
+fail_on_revert = false
+
+[profile.lite]
+optimizer = false
+fuzz = {runs = 32}
+invariant = {runs = 16, depth = 16}
+
+[profile.deep]
+fuzz = {runs = 10_000}
+invariant = {runs = 1_000, depth = 128}
+
+[fmt]
+line_length = 120
+tab_width = 4
+bracket_spacing = false
+int_types = "long"
+multiline_func_header = "params_first"
+sort_imports = true
+
+[rpc_endpoints]
+bsc = "${BSC_RPC_URL}"
+bsc_testnet = "${BSC_TESTNET_RPC_URL}"
+opbnb = "${OPBNB_RPC_URL}"
+
+[etherscan]
+bsc = {key = "${BSCSCAN_API_KEY}", chain = 56}
+bsc_testnet = {key = "${BSCSCAN_API_KEY}", chain = 97}
